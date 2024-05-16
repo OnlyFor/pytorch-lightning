@@ -66,8 +66,6 @@ def train():
     
     trainer.fit(model)
 
-    # TODO:
-    # See `fabric consolidate --help` if you need to convert the checkpoint to a single file
     trainer.print("Saving a (distributed) checkpoint ...")
     trainer.save_checkpoint("checkpoint.pt")
 
