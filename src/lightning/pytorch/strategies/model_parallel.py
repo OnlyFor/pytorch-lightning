@@ -157,6 +157,8 @@ class ModelParallelStrategy(ParallelStrategy):
 
     @override
     def setup(self, trainer: "pl.Trainer") -> None:
+        from torch.distributed.fsdp import FullyShardedDataParallel
+
         assert self.accelerator is not None
         self.accelerator.setup(trainer)
 
@@ -164,6 +166,11 @@ class ModelParallelStrategy(ParallelStrategy):
             raise TypeError(
                 f"When using the {type(self).__name__}, you are required to override the `configure_model()` hook in"
                 f" the LightningModule and apply parallelization there."
+            )
+        if any(isinstance(mod, FullyShardedDataParallel) for mod in self.model.modules()):
+            raise TypeError(
+                "Found modules that are wrapped with `torch.distributed.fsdp.FullyShardedDataParallel`."
+                f" The `{self.__class__.__name__}` only supports the new FSDP2 APIs in PyTorch >= 2.3."
             )
 
         _materialize_distributed_module(self.model, self.root_device)
@@ -193,7 +200,7 @@ class ModelParallelStrategy(ParallelStrategy):
     @contextmanager
     @override
     def tensor_init_context(self, empty_init: Optional[bool] = None) -> Generator[None, None, None]:
-        # Materializaton happens in `_setup_module`
+        # Materializaton happens in `setup()`
         empty_init_context = torch.device("meta") if empty_init else nullcontext()
         with empty_init_context, self.precision_plugin.tensor_init_context():
             yield
@@ -277,6 +284,11 @@ class ModelParallelStrategy(ParallelStrategy):
     def save_checkpoint(
         self, checkpoint: Dict[str, Any], filepath: _PATH, storage_options: Optional[Any] = None
     ) -> None:
+        if storage_options is not None:
+            raise TypeError(
+                f"`{type(self).__name__}.save_checkpoint(..., storage_options=...)` is not supported because"
+                f" `{type(self).__name__}` does not use the `CheckpointIO`."
+            )
         raise NotImplementedError("Checkpoint saving is not yet implemented.")
 
     @override
