@@ -32,14 +32,13 @@ class Llama2(L.LightningModule):
         return loss
 
     def configure_optimizers(self):
-        # TODO
         return torch.optim.AdamW(self.model.parameters(), lr=3e-3, foreach=True)
 
     def train_dataloader(self):
         dataset = RandomTokenDataset(vocab_size=self.model_args.vocab_size, seq_length=128)
         # Trainer configures the sampler automatically for you such that
         # all batches in a tensor-parallel group are identical
-        return DataLoader(dataset, batch_size=8)
+        return DataLoader(dataset, batch_size=8, num_workers=4)
 
 
 def train():
@@ -50,7 +49,13 @@ def train():
         tensor_parallel_size=2,
     )
 
-    trainer = L.Trainer(accelerator="cuda", devices=4, strategy=strategy)
+    trainer = L.Trainer(
+        accelerator="cuda", 
+        devices=4, 
+        strategy=strategy,
+        limit_train_batches=10,
+        max_epochs=1,
+    )
 
     # Initialize the model
     with trainer.init_module(empty_init=True):
@@ -58,6 +63,8 @@ def train():
 
     trainer.print(f"Number of model parameters: {sum(p.numel() for p in model.parameters()) / 1e9:.1f} B")
     trainer.print("Starting training ...")
+    
+    trainer.fit(model)
 
     # TODO:
     # See `fabric consolidate --help` if you need to convert the checkpoint to a single file
