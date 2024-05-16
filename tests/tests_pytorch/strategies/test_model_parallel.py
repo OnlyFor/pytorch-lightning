@@ -171,7 +171,6 @@ def test_set_timeout(init_process_group_mock, _):
     )
 
 
-# TODO
 @RunIf(min_torch="2.3")
 def test_meta_device_materialization():
     """Test that the `setup()` method materializes meta-device tensors in the LightningModule."""
@@ -181,7 +180,7 @@ def test_meta_device_materialization():
             super().__init__()
             self.weight = nn.Parameter(torch.ones(4, 4))
 
-    class CustomModel(nn.Module):
+    class CustomModel(LightningModule):
         def __init__(self):
             super().__init__()
             # nn.Sequential as a parameterless module
@@ -192,9 +191,8 @@ def test_meta_device_materialization():
         def reset_parameters(self):
             self.buffer.fill_(1.0)
 
-    strategy = ModelParallelStrategy()
-    strategy._device_mesh = Mock()
-    strategy._parallel_devices = [torch.device("cpu")]
+        def configure_model(self) -> None:
+            pass
 
     with torch.device("meta"):
         model = CustomModel()
@@ -202,7 +200,14 @@ def test_meta_device_materialization():
     assert model.layer2.weight.is_meta
     assert model.buffer.is_meta
 
+    strategy = ModelParallelStrategy()
+    strategy._accelerator = Mock()
+    strategy._device_mesh = Mock()
+    strategy._parallel_devices = [torch.device("cpu")]
+    strategy._lightning_module = model
+    strategy.model = model
+
     with pytest.warns(UserWarning, match=r"`reset_parameters\(\)` method for re-initialization: NoResetParameters"):
-        model = strategy.setup_module(model)
+        strategy.setup(Mock())
     assert all(not p.is_meta for p in model.parameters())
     assert all(not b.is_meta for b in model.buffers())
