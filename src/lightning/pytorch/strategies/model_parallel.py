@@ -45,7 +45,7 @@ from lightning.fabric.strategies.fsdp import (
     _optimizer_has_flat_params,
     _setup_activation_checkpointing,
 )
-from lightning.fabric.strategies.model_parallel import _load_raw_module_state, _load_checkpoint
+from lightning.fabric.strategies.model_parallel import _load_raw_module_state, _load_checkpoint, _setup_device_mesh
 from lightning.fabric.utilities.distributed import (
     _distributed_is_initialized,
     _get_default_process_group_backend_for_device,
@@ -107,13 +107,11 @@ class ModelParallelStrategy(ParallelStrategy):
             raise ImportError(f"{type(self).__name__} requires PyTorch 2.3 or higher.")
         self._data_parallel_size = data_parallel_size
         self._tensor_parallel_size = tensor_parallel_size
-        self._num_nodes = 1
         self._save_distributed_checkpoint = save_distributed_checkpoint
         self._process_group_backend: Optional[str] = process_group_backend
         self._timeout: Optional[timedelta] = timeout
-        self._backward_sync_control = _ParallelBackwardSyncControl()
-
         self._device_mesh: Optional["DeviceMesh"] = None
+        self.num_nodes = 1
 
     @property
     def device_mesh(self) -> "DeviceMesh":
@@ -172,7 +170,15 @@ class ModelParallelStrategy(ParallelStrategy):
     def setup_environment(self) -> None:
         super().setup_environment()
         self._setup_distributed()
-        self._setup_device_mesh()
+        if self._data_parallel_size == "auto":
+            self._data_parallel_size = self.num_nodes
+        if self._tensor_parallel_size == "auto":
+            self._tensor_parallel_size = self.num_processes
+        self._device_mesh = _setup_device_mesh(
+            self._data_parallel_size, self._tensor_parallel_size, self.world_size, self.root_device
+        )
+        # Users can access device mesh in `LightningModule.configure_model()`
+        self.lightning_module._device_mesh = self._device_mesh
 
     @override
     def setup(self, trainer: "pl.Trainer") -> None:
@@ -455,9 +461,6 @@ class ModelParallelStrategy(ParallelStrategy):
         self._process_group_backend = self._get_process_group_backend()
         assert self.cluster_environment is not None
         _init_dist_connection(self.cluster_environment, self._process_group_backend, timeout=self._timeout)
-
-    def _setup_device_mesh(self) -> None:
-        pass
 
     def _get_process_group_backend(self) -> str:
         return self._process_group_backend or _get_default_process_group_backend_for_device(self.root_device)
