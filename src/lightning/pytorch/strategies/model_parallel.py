@@ -11,40 +11,27 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import logging
 import shutil
 from contextlib import contextmanager, nullcontext
 from datetime import timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Dict, Generator, List, Literal, Mapping, Optional, Set, Type, Union
+from typing import TYPE_CHECKING, Any, Dict, Generator, List, Literal, Mapping, Optional, Set, Type, Union
 
 import torch
 from lightning_utilities.core.rank_zero import rank_zero_only as utils_rank_zero_only
 from torch import Tensor
-from torch.nn import Module
 from torch.optim import Optimizer
 from typing_extensions import override
 
 import lightning.pytorch as pl
-from lightning.fabric.plugins import CheckpointIO, ClusterEnvironment
+from lightning.fabric.plugins import CheckpointIO
 from lightning.fabric.plugins.collectives.torch_collective import default_pg_timeout
 from lightning.fabric.strategies.fsdp import (
     _METADATA_FILENAME,
-    _activation_checkpointing_kwargs,
-    _auto_wrap_policy_kwargs,
-    _distributed_checkpoint_load,
     _distributed_checkpoint_save,
-    _get_full_state_dict_context,
-    _get_sharded_state_dict_context,
-    _init_cpu_offload,
-    _init_sharding_strategy,
-    _is_full_checkpoint,
     _is_sharded_checkpoint,
-    _move_torchmetrics_to_device,
-    _optimizer_has_flat_params,
-    _setup_activation_checkpointing,
 )
-from lightning.fabric.strategies.model_parallel import _load_raw_module_state, _load_checkpoint, _setup_device_mesh
+from lightning.fabric.strategies.model_parallel import _load_checkpoint, _setup_device_mesh
 from lightning.fabric.utilities.distributed import (
     _distributed_is_initialized,
     _get_default_process_group_backend_for_device,
@@ -52,22 +39,18 @@ from lightning.fabric.utilities.distributed import (
     _sync_ddp_if_available,
 )
 from lightning.fabric.utilities.distributed import group as _group
-from lightning.fabric.utilities.imports import _TORCH_GREATER_EQUAL_2_1, _TORCH_GREATER_EQUAL_2_3
-from lightning.fabric.utilities.init import _EmptyInit, _has_meta_device_parameters_or_buffers, \
-    _materialize_distributed_module
-from lightning.fabric.utilities.load import _lazy_load, _materialize_tensors
+from lightning.fabric.utilities.imports import _TORCH_GREATER_EQUAL_2_3
+from lightning.fabric.utilities.init import _materialize_distributed_module
 from lightning.fabric.utilities.optimizer import _optimizers_to_device
 from lightning.fabric.utilities.seed import reset_seed
 from lightning.fabric.utilities.types import _PATH, ReduceOp
 from lightning.pytorch.core.optimizer import LightningOptimizer
-from lightning.pytorch.plugins.precision import Precision
-from lightning.pytorch.plugins.precision.fsdp import FSDPPrecision
 from lightning.pytorch.strategies.launchers.subprocess_script import _SubprocessScriptLauncher
 from lightning.pytorch.strategies.parallel import ParallelStrategy
 from lightning.pytorch.strategies.strategy import TBroadcast
 from lightning.pytorch.trainer.states import TrainerFn
+from lightning.pytorch.utilities.rank_zero import rank_zero_only
 from lightning.pytorch.utilities.model_helpers import is_overridden
-from lightning.pytorch.utilities.rank_zero import rank_zero_info, rank_zero_only, rank_zero_warn
 
 if TYPE_CHECKING:
     from torch.distributed.device_mesh import DeviceMesh
@@ -184,13 +167,11 @@ class ModelParallelStrategy(ParallelStrategy):
         assert self.accelerator is not None
         self.accelerator.setup(trainer)
 
-        # TODO: assert that the configure_model() hook was implemented and model has
-        # distributed modules
-
-        # TODO: needed?
-        # we set the device so that optimizers can be created with distributed comms.
-        assert self.lightning_module is not None
-        self.lightning_module._device = self.root_device
+        if not is_overridden("configure_model", self.lightning_module):
+            raise TypeError(
+                f"When using the {type(self).__name__}, you are required to override the `configure_model()` hook in"
+                f" the LightningModule and apply parallelization there."
+            )
 
         _materialize_distributed_module(self.model, self.root_device)
 
