@@ -66,9 +66,6 @@ def train():
     
     trainer.fit(model)
 
-    trainer.print("Saving a (distributed) checkpoint ...")
-    trainer.save_checkpoint("checkpoint.pt")
-
     trainer.print("Training successfully completed!")
     trainer.print(f"Peak memory usage: {torch.cuda.max_memory_reserved() / 1e9:.02f} GB")
 

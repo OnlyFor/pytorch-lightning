@@ -176,6 +176,8 @@ class ModelParallelStrategy(ParallelStrategy):
         _materialize_distributed_module(self.model, self.root_device)
 
         self.model = self.precision_plugin.convert_module(self.model)
+        self.model_to_device()  # move all remaining layers if any left on CPU.
+
         self.barrier()
 
         if trainer.state.fn == TrainerFn.FITTING:
@@ -195,7 +197,8 @@ class ModelParallelStrategy(ParallelStrategy):
 
     @override
     def model_to_device(self) -> None:
-        pass
+        assert self.model is not None
+        self.model.to(self.root_device)
 
     @contextmanager
     @override
