@@ -24,9 +24,8 @@ import torch.nn as nn
 from lightning import LightningModule
 from lightning.pytorch.plugins.environments import LightningEnvironment
 from lightning.pytorch.strategies import ModelParallelStrategy
-from torch.optim import Adam
 
-from tests_fabric.helpers.runif import RunIf
+from tests_pytorch.helpers.runif import RunIf
 
 
 @mock.patch("lightning.pytorch.strategies.model_parallel._TORCH_GREATER_EQUAL_2_3", False)
