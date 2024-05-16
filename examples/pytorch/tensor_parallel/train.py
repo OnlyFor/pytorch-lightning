@@ -50,8 +50,8 @@ def train():
     )
 
     trainer = L.Trainer(
-        accelerator="cuda", 
-        devices=4, 
+        accelerator="cuda",
+        devices=4,
         strategy=strategy,
         limit_train_batches=10,
         max_epochs=1,
@@ -63,7 +63,7 @@ def train():
 
     trainer.print(f"Number of model parameters: {sum(p.numel() for p in model.parameters()) / 1e9:.1f} B")
     trainer.print("Starting training ...")
-    
+
     trainer.fit(model)
 
     trainer.print("Training successfully completed!")

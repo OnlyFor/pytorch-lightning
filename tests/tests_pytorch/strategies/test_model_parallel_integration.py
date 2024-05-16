@@ -11,16 +11,11 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import os
-from copy import deepcopy
-from pathlib import Path
-from unittest import mock
 
-import pytest
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from lightning.pytorch import Trainer, LightningModule, seed_everything
+from lightning.pytorch import LightningModule, Trainer, seed_everything
 from lightning.pytorch.demos.boring_classes import BoringModel, RandomDataset
 from lightning.pytorch.strategies import ModelParallelStrategy
 from torch.utils.data import DataLoader, DistributedSampler
@@ -106,7 +101,7 @@ def test_setup_device_mesh():
                 assert device_mesh.size(0) == dp_size
                 assert device_mesh.size(1) == tp_size
                 assert device_mesh.ndim == 2
-        
+
         model = Model()
         trainer.fit(model)
 
@@ -131,7 +126,7 @@ def test_setup_device_mesh():
             assert device_mesh.mesh_dim_names == ("data_parallel", "tensor_parallel")
             assert device_mesh.size(0) == 1
             assert device_mesh.size(1) == 4
-        
+
     model = Model()
     trainer.fit(model)
 
@@ -139,27 +134,29 @@ def test_setup_device_mesh():
 @RunIf(min_torch="2.3", standalone=True, min_cuda_gpus=2)
 def test_tensor_parallel():
     from torch.distributed._tensor import DTensor
-    
+
     class Model(LightningModule):
         def __init__(self):
             super().__init__()
             self.model = FeedForward()
-        
+
         def configure_model(self):
             _parallelize_feed_forward_tp(self.model, device_mesh=self.device_mesh)
-            
+
         def on_train_start(self):
             device_mesh = self.device_mesh
             optimizer = self.optimizers()
-            assert all(tensor.device_mesh == device_mesh["tensor_parallel"] for tensor in optimizer.param_groups[0]["params"])
+            assert all(
+                tensor.device_mesh == device_mesh["tensor_parallel"] for tensor in optimizer.param_groups[0]["params"]
+            )
             assert all(isinstance(weight, DTensor) for weight in self.model.parameters())
             assert self.model.w1.weight.device_mesh == device_mesh["tensor_parallel"]
-            
+
             # No data sharding, all GPUs get the same input inside a TP group
             dataloader = self.trainer.train_dataloader
             assert len(dataloader) == 6 // dataloader.batch_size
             assert isinstance(dataloader.sampler, DistributedSampler)
-            
+
         def training_step(self, batch):
             # All batches must be identical across TP group
             batches = self.all_gather(batch)
@@ -167,18 +164,18 @@ def test_tensor_parallel():
 
             output = self.model(batch)
             return output.sum()
-    
+
         def train_dataloader(self):
             dataset_size = 6
             dataset = RandomDataset(32, dataset_size)
             return DataLoader(dataset, batch_size=2)
-            
+
         def configure_optimizers(self):
             return torch.optim.AdamW(model.parameters())
 
     trainer = Trainer(
-        accelerator="auto", 
-        devices=2, 
+        accelerator="auto",
+        devices=2,
         strategy=ModelParallelStrategy(),
         max_steps=2,
         enable_checkpointing=False,
@@ -188,7 +185,7 @@ def test_tensor_parallel():
     seed_everything(0)
     with trainer.init_module(empty_init=True):
         model = Model()
-        
+
     trainer.fit(model)
 
 
@@ -200,10 +197,10 @@ def test_fsdp2_tensor_parallel():
         def __init__(self):
             super().__init__()
             self.model = FeedForward()
-        
+
         def configure_model(self):
             _parallelize_feed_forward_fsdp2_tp(self.model, device_mesh=self.device_mesh)
-            
+
         def on_train_start(self):
             optimizer = self.optimizers()
             assert all(isinstance(weight, DTensor) for weight in self.model.parameters())
@@ -214,19 +211,19 @@ def test_fsdp2_tensor_parallel():
             assert all(weight.device.type != "meta" for weight in self.model.parameters())
             assert all(tensor.device_mesh.ndim == 2 for tensor in optimizer.param_groups[0]["params"])
             assert all(tensor.device.type != "meta" for tensor in optimizer.param_groups[0]["params"])
-            
+
             # No data sharding across TP dimension, sharding across data-parallel dimension only
             device_mesh = self.device_mesh
             dp_mesh = device_mesh["data_parallel"]
             dataloader = self.trainer.train_dataloader
             assert len(dataloader) == 8 // dataloader.batch_size // dp_mesh.size()
             assert isinstance(dataloader.sampler, DistributedSampler)
-            
+
         def training_step(self, batch):
             batches = self.all_gather(batch)
             dp_mesh = self.device_mesh["data_parallel"]
             tp_mesh = self.device_mesh["tensor_parallel"]
-            
+
             # Batches across the TP dimension must be identical
             batches_tp = batches[tp_mesh.mesh]
             assert all(torch.equal(batches_tp[0], batches_tp[i]) for i in range(1, len(batches_tp)))
@@ -236,12 +233,12 @@ def test_fsdp2_tensor_parallel():
 
             output = self.model(batch)
             return output.sum()
-    
+
         def train_dataloader(self):
             dataset_size = 8
             dataset = RandomDataset(32, dataset_size)
             return DataLoader(dataset, batch_size=2)
-            
+
         def configure_optimizers(self):
             return torch.optim.AdamW(model.parameters())
 
@@ -250,8 +247,8 @@ def test_fsdp2_tensor_parallel():
         tensor_parallel_size=2,
     )
     trainer = Trainer(
-        accelerator="auto", 
-        devices=4, 
+        accelerator="auto",
+        devices=4,
         strategy=strategy,
         max_steps=2,
         enable_checkpointing=False,
@@ -261,5 +258,5 @@ def test_fsdp2_tensor_parallel():
     seed_everything(0)
     with trainer.init_module(empty_init=True):
         model = Model()
-        
+
     trainer.fit(model)

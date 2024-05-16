@@ -42,8 +42,8 @@ from lightning.pytorch.strategies.launchers.subprocess_script import _Subprocess
 from lightning.pytorch.strategies.parallel import ParallelStrategy
 from lightning.pytorch.strategies.strategy import TBroadcast
 from lightning.pytorch.trainer.states import TrainerFn
-from lightning.pytorch.utilities.rank_zero import rank_zero_only
 from lightning.pytorch.utilities.model_helpers import is_overridden
+from lightning.pytorch.utilities.rank_zero import rank_zero_only
 
 if TYPE_CHECKING:
     from torch.distributed.device_mesh import DeviceMesh
@@ -263,9 +263,9 @@ class ModelParallelStrategy(ParallelStrategy):
 
     @override
     def optimizer_state(self, optimizer: Optimizer) -> Dict[str, Tensor]:
+        from torch.distributed.checkpoint.state_dict import StateDictOptions, get_optimizer_state_dict
         from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
         from torch.distributed.fsdp import OptimStateKeyType
-        from torch.distributed.checkpoint.state_dict import StateDictOptions, get_optimizer_state_dict
 
         state_dict_options = StateDictOptions(full_state_dict=(not self._save_distributed_checkpoint), cpu_offload=True)
         if isinstance(optimizer, LightningOptimizer):
@@ -316,4 +316,3 @@ class ModelParallelStrategy(ParallelStrategy):
         # `LightningEnvironment.set_global_rank` will do this too, but we cannot rely on that implementation detail
         # additionally, for some implementations, the setter is a no-op, so it's safer to access the getter
         rank_zero_only.rank = utils_rank_zero_only.rank = self.global_rank
-
