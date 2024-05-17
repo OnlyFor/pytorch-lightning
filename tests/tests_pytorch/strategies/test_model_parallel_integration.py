@@ -19,6 +19,7 @@ from lightning.pytorch import LightningModule, Trainer, seed_everything
 from lightning.pytorch.demos.boring_classes import BoringModel, RandomDataset
 from lightning.pytorch.strategies import ModelParallelStrategy
 from torch.utils.data import DataLoader, DistributedSampler
+from torchmetrics.classification import Accuracy
 
 from tests_pytorch.helpers.runif import RunIf
 
@@ -72,6 +73,39 @@ def _parallelize_feed_forward_fsdp2_tp(model, device_mesh):
     model = _parallelize_feed_forward_tp(model, device_mesh)
     model = _parallelize_feed_forward_fsdp2(model, device_mesh)
     return model
+
+
+class TemplateModel(LightningModule):
+    def __init__(self):
+        super().__init__()
+        self.model = FeedForward()
+
+    def training_step(self, batch):
+        output = self.model(batch)
+        return output.sum()
+
+    def train_dataloader(self):
+        dataset_size = 6
+        dataset = RandomDataset(32, dataset_size)
+        return DataLoader(dataset, batch_size=2)
+
+    def configure_optimizers(self):
+        return torch.optim.AdamW(self.model.parameters())
+
+
+class FSDP2Model(TemplateModel):
+    def configure_model(self):
+        _parallelize_feed_forward_fsdp2(self.model, device_mesh=self.device_mesh)
+
+
+class TensorParallelModel(TemplateModel):
+    def configure_model(self):
+        _parallelize_feed_forward_tp(self.model, device_mesh=self.device_mesh)
+
+
+class FSDP2TensorParallelModel(TemplateModel):
+    def configure_model(self):
+        _parallelize_feed_forward_fsdp2_tp(self.model, device_mesh=self.device_mesh)
 
 
 @RunIf(min_torch="2.3", standalone=True, min_cuda_gpus=4)
@@ -135,14 +169,7 @@ def test_setup_device_mesh():
 def test_tensor_parallel():
     from torch.distributed._tensor import DTensor
 
-    class Model(LightningModule):
-        def __init__(self):
-            super().__init__()
-            self.model = FeedForward()
-
-        def configure_model(self):
-            _parallelize_feed_forward_tp(self.model, device_mesh=self.device_mesh)
-
+    class Model(TensorParallelModel):
         def on_train_start(self):
             device_mesh = self.device_mesh
             optimizer = self.optimizers()
@@ -161,17 +188,7 @@ def test_tensor_parallel():
             # All batches must be identical across TP group
             batches = self.all_gather(batch)
             assert all(torch.equal(batches[0], batches[i]) for i in range(1, len(batches)))
-
-            output = self.model(batch)
-            return output.sum()
-
-        def train_dataloader(self):
-            dataset_size = 6
-            dataset = RandomDataset(32, dataset_size)
-            return DataLoader(dataset, batch_size=2)
-
-        def configure_optimizers(self):
-            return torch.optim.AdamW(model.parameters())
+            return super().training_step(batch)
 
     trainer = Trainer(
         accelerator="auto",
@@ -193,14 +210,7 @@ def test_tensor_parallel():
 def test_fsdp2_tensor_parallel():
     from torch.distributed._tensor import DTensor
 
-    class Model(LightningModule):
-        def __init__(self):
-            super().__init__()
-            self.model = FeedForward()
-
-        def configure_model(self):
-            _parallelize_feed_forward_fsdp2_tp(self.model, device_mesh=self.device_mesh)
-
+    class Model(FSDP2TensorParallelModel):
         def on_train_start(self):
             optimizer = self.optimizers()
             assert all(isinstance(weight, DTensor) for weight in self.model.parameters())
@@ -231,16 +241,12 @@ def test_fsdp2_tensor_parallel():
             batches_dp = batches[dp_mesh.mesh]
             assert all(not torch.equal(batches_dp[0], batches_dp[i]) for i in range(1, len(batches_dp)))
 
-            output = self.model(batch)
-            return output.sum()
+            return super().training_step(batch)
 
         def train_dataloader(self):
             dataset_size = 8
             dataset = RandomDataset(32, dataset_size)
             return DataLoader(dataset, batch_size=2)
-
-        def configure_optimizers(self):
-            return torch.optim.AdamW(model.parameters())
 
     strategy = ModelParallelStrategy(
         data_parallel_size=2,
@@ -259,4 +265,33 @@ def test_fsdp2_tensor_parallel():
     with trainer.init_module(empty_init=True):
         model = Model()
 
+    trainer.fit(model)
+
+
+@RunIf(min_torch="2.3", min_cuda_gpus=1)
+def test_modules_without_parameters(tmp_path):
+    """Test that TorchMetrics get moved to the device despite not having any parameters."""
+
+    class MetricsModel(TensorParallelModel):
+        def __init__(self):
+            super().__init__()
+            self.metric = Accuracy("multiclass", num_classes=10)
+            assert self.metric.device == self.metric.tp.device == torch.device("cpu")
+
+        def setup(self, stage) -> None:
+            assert self.metric.device == self.metric.tp.device == torch.device("cpu")
+
+        def training_step(self, batch):
+            assert self.metric.device == self.metric.tp.device == torch.device("cuda", 0)
+            self.metric(torch.rand(2, 10, device=self.device), torch.randint(0, 10, size=(2,), device=self.device))
+            return super().training_step(batch)
+
+    model = MetricsModel()
+    trainer = Trainer(
+        default_root_dir=tmp_path,
+        accelerator="cuda",
+        devices=1,
+        strategy=ModelParallelStrategy(),
+        max_steps=1,
+    )
     trainer.fit(model)
