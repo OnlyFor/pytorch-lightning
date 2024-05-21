@@ -741,7 +741,7 @@ def test_save_checkpoint_storage_options(tmp_path):
 @mock.patch("lightning.pytorch.strategies.fsdp._get_sharded_state_dict_context")
 @mock.patch("lightning.fabric.plugins.io.torch_io._atomic_save")
 @mock.patch("lightning.pytorch.strategies.fsdp.shutil")
-def test_fsdp_save_checkpoint_path_exists(shutil_mock, torch_save_mock, __, ___, tmp_path):
+def test_save_checkpoint_path_exists(shutil_mock, torch_save_mock, __, ___, tmp_path):
     strategy = FSDPStrategy(state_dict_type="full")
 
     # state_dict_type='full', path exists, path is not a sharded checkpoint: error
@@ -757,16 +757,12 @@ def test_fsdp_save_checkpoint_path_exists(shutil_mock, torch_save_mock, __, ___,
     path.mkdir()
     (path / "meta.pt").touch()
     assert _is_sharded_checkpoint(path)
-    model = Mock(spec=FullyShardedDataParallel)
-    model.modules.return_value = [model]
     strategy.save_checkpoint(Mock(), filepath=path)
     shutil_mock.rmtree.assert_called_once_with(path)
 
     # state_dict_type='full', path exists, path is a file: no error (overwrite)
     path = tmp_path / "file.pt"
     path.touch()
-    model = Mock(spec=FullyShardedDataParallel)
-    model.modules.return_value = [model]
     torch_save_mock.reset_mock()
     strategy.save_checkpoint(Mock(), filepath=path)
     torch_save_mock.assert_called_once()
@@ -783,8 +779,6 @@ def test_fsdp_save_checkpoint_path_exists(shutil_mock, torch_save_mock, __, ___,
     path = tmp_path / "not-empty-2"
     path.mkdir()
     (path / "file").touch()
-    model = Mock(spec=FullyShardedDataParallel)
-    model.modules.return_value = [model]
     with save_mock:
         strategy.save_checkpoint({"state_dict": {}, "optimizer_states": {"": {}}}, filepath=path)
     assert (path / "file").exists()
@@ -792,21 +786,19 @@ def test_fsdp_save_checkpoint_path_exists(shutil_mock, torch_save_mock, __, ___,
     # state_dict_type='sharded', path exists, path is a file: no error (overwrite)
     path = tmp_path / "file-2.pt"
     path.touch()
-    model = Mock(spec=FullyShardedDataParallel)
-    model.modules.return_value = [model]
     with save_mock:
         strategy.save_checkpoint({"state_dict": {}, "optimizer_states": {"": {}}}, filepath=path)
     assert path.is_dir()
 
 
 @mock.patch("lightning.pytorch.strategies.fsdp.FSDPStrategy.broadcast", lambda _, x: x)
-def test_fsdp_save_checkpoint_unknown_state_dict_type(tmp_path):
+def test_save_checkpoint_unknown_state_dict_type(tmp_path):
     strategy = FSDPStrategy(state_dict_type="invalid")
     with pytest.raises(ValueError, match="Unknown state_dict_type"):
         strategy.save_checkpoint(checkpoint=Mock(), filepath=tmp_path)
 
 
-def test_fsdp_load_unknown_checkpoint_type(tmp_path):
+def test_load_unknown_checkpoint_type(tmp_path):
     """Test that the strategy validates the contents at the checkpoint path."""
     strategy = FSDPStrategy()
     strategy.model = Mock()
