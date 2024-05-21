@@ -338,3 +338,268 @@ def test_module_init_context(precision, expected_dtype, tmp_path):
 
     # Case 2: Empty-init with PyTorch >= 2.1 supports meta device
     _run_setup_assertions(empty_init=True, expected_device=torch.device("meta"))
+
+
+@RunIf(min_torch="2.3", min_cuda_gpus=2, skip_windows=True, standalone=True)
+@pytest.mark.parametrize("wrap_min_params", [2, 1024, 100000000])
+def test_strategy_full_state_dict(tmp_path, wrap_min_params):
+    """Test to ensure that the full state dict is extracted when using FSDP strategy.
+
+    Based on `wrap_min_params`, the model will be fully wrapped, half wrapped, and not wrapped at all.
+
+    """
+    model = TestFSDPModelAutoWrapped(wrap_min_params=wrap_min_params)
+    correct_state_dict = model.state_dict()  # State dict before wrapping
+
+    strategy = FSDPStrategy(auto_wrap_policy=partial(size_based_auto_wrap_policy, min_num_params=wrap_min_params))
+    trainer = Trainer(
+        default_root_dir=tmp_path,
+        accelerator="gpu",
+        devices=2,
+        strategy=strategy,
+        precision="16-mixed",
+        max_epochs=1,
+        barebones=True,
+    )
+    trainer.fit(model)
+
+    full_state_dict = trainer.strategy.lightning_module_state_dict()
+
+    if trainer.global_rank != 0:
+        assert len(full_state_dict) == 0
+        return
+
+    # State dict should contain same number of keys
+    assert len(correct_state_dict) == len(full_state_dict)
+    # OrderedDict should return the same keys in the same order
+    assert all(_ex == _co for _ex, _co in zip(full_state_dict.keys(), correct_state_dict.keys()))
+
+
+@RunIf(min_torch="2.3", min_cuda_gpus=2, skip_windows=True, standalone=True)
+@pytest.mark.parametrize("wrap_min_params", [2, 1024, 100000000])
+def test_strategy_save_optimizer_states(tmp_path, wrap_min_params):
+    """Test to ensure that the full state dict and optimizer states is saved when using FSDP strategy.
+
+    Based on `wrap_min_params`, the model will be fully wrapped, half wrapped, and not wrapped at all. If the model can
+    be restored to DDP, it means that the optimizer states were saved correctly.
+
+    """
+    model = TestFSDPModelAutoWrapped(wrap_min_params=wrap_min_params)
+
+    strategy = FSDPStrategy(auto_wrap_policy=partial(size_based_auto_wrap_policy, min_num_params=wrap_min_params))
+    trainer = Trainer(
+        default_root_dir=tmp_path,
+        accelerator="gpu",
+        devices=2,
+        strategy=strategy,
+        precision="16-mixed",
+        max_epochs=1,
+        barebones=True,
+    )
+
+    trainer.fit(model)
+    model_path = os.path.join(tmp_path, "last.ckpt")
+    model_path = trainer.strategy.broadcast(model_path)
+    trainer.save_checkpoint(model_path)
+
+    model_state_dict = trainer.strategy.lightning_module_state_dict()
+    optimizer_state_dict = trainer.strategy.optimizer_state(model.optimizers())
+
+    if trainer.global_rank != 0:
+        assert len(model_state_dict) == 0
+
+    if trainer.global_rank != 0 and _TORCH_GREATER_EQUAL_2_1:
+        assert len(optimizer_state_dict) == 0
+
+    # restore model to ddp
+    model = TestBoringModel()
+    trainer = Trainer(default_root_dir=tmp_path, accelerator="gpu", devices=2, strategy="ddp", max_epochs=1)
+
+    # This step will restore the model and optimizer states
+    trainer.fit(model, ckpt_path=model_path)
+
+    # Get the model and optimizer states from the restored ddp model
+    restored_model_state_dict = trainer.strategy.lightning_module_state_dict()
+    restored_optimizer_state_dict = trainer.strategy.optimizer_state(model.optimizers())
+
+    if trainer.global_rank == 0:
+        # assert everything is the same
+        assert len(model_state_dict) == len(restored_model_state_dict)
+        assert len(optimizer_state_dict) == len(restored_optimizer_state_dict)
+
+        torch.testing.assert_close(model_state_dict, restored_model_state_dict, atol=0, rtol=0)
+        torch.testing.assert_close(optimizer_state_dict, restored_optimizer_state_dict, atol=0, rtol=0)
+
+    trainer.strategy.barrier()
+
+
+@RunIf(min_torch="2.3", min_cuda_gpus=2, skip_windows=True, standalone=True)
+@pytest.mark.parametrize("wrap_min_params", [2, 1024, 100000000])
+def test_strategy_load_optimizer_states(wrap_min_params, tmp_path):
+    """Test to ensure that the full state dict and optimizer states can be load when using FSDP strategy.
+
+    Based on `wrap_min_params`, the model will be fully wrapped, half wrapped, and not wrapped at all. If the DDP model
+    can be restored to FSDP, it means that the optimizer states were restored correctly.
+
+    """
+
+    # restore model to ddp
+    model = TestBoringModel()
+    trainer = Trainer(default_root_dir=tmp_path, accelerator="gpu", devices=2, strategy="ddp", max_epochs=1)
+
+    # This step will restore the model and optimizer states
+    trainer.fit(model)
+    model_path = os.path.join(tmp_path, "last.ckpt")
+    model_path = trainer.strategy.broadcast(model_path)
+    trainer.save_checkpoint(model_path)
+
+    # Get the model and optimizer states from the restored ddp model
+    model_state_dict = trainer.strategy.lightning_module_state_dict()
+    optimizer_state_dict = trainer.strategy.optimizer_state(model.optimizers())
+
+    # Build a new FSDP model
+    model = TestFSDPModelAutoWrapped(wrap_min_params=wrap_min_params)
+
+    strategy = FSDPStrategy(auto_wrap_policy=partial(size_based_auto_wrap_policy, min_num_params=wrap_min_params))
+    trainer = Trainer(
+        default_root_dir=tmp_path,
+        accelerator="gpu",
+        devices=2,
+        strategy=strategy,
+        precision="16-mixed",
+        max_epochs=1,
+        barebones=True,
+    )
+
+    trainer.fit(model, ckpt_path=model_path)
+
+    restored_model_state_dict = trainer.strategy.lightning_module_state_dict()
+    restored_optimizer_state_dict = trainer.strategy.optimizer_state(model.optimizers())
+
+    if trainer.global_rank != 0:
+        assert len(restored_model_state_dict) == 0
+
+    if trainer.global_rank != 0 and _TORCH_GREATER_EQUAL_2_1:
+        assert len(restored_optimizer_state_dict) == 0
+
+    if trainer.global_rank == 0:
+        # assert everything is the same
+        assert len(model_state_dict) == len(restored_model_state_dict)
+        assert len(optimizer_state_dict) == len(restored_optimizer_state_dict)
+        torch.testing.assert_close(model_state_dict, restored_model_state_dict, atol=0, rtol=0)
+        torch.testing.assert_close(optimizer_state_dict, restored_optimizer_state_dict, atol=0, rtol=0)
+
+    trainer.strategy.barrier()
+
+
+class TestFSDPCheckpointModel(BoringModel):
+    def __init__(self, params_to_compare=None):
+        super().__init__()
+        self.layer = torch.nn.Sequential(torch.nn.Linear(32, 32), torch.nn.ReLU(), torch.nn.Linear(32, 2))
+        self.params_to_compare = params_to_compare
+
+    def configure_optimizers(self):
+        # SGD's FSDP optimier state is fixed in https://github.com/pytorch/pytorch/pull/99214
+        return torch.optim.AdamW(self.parameters(), lr=0.1)
+
+    def on_train_start(self):
+        if self.params_to_compare is None:
+            return
+        for p0, p1 in zip(self.params_to_compare, self.trainer.model.parameters()):
+            torch.testing.assert_close(p0, p1, atol=0, rtol=0, equal_nan=True)
+
+
+@RunIf(min_torch="2.3", min_cuda_gpus=2, standalone=True)
+def test_save_load_sharded_state_dict(tmp_path):
+    """Test FSDP saving and loading with the sharded state dict format."""
+    strategy = FSDPStrategy(auto_wrap_policy={nn.Linear}, state_dict_type="sharded")
+    trainer_kwargs = {
+        "default_root_dir": tmp_path,
+        "accelerator": "cuda",
+        "devices": 2,
+        "max_epochs": 1,
+        "enable_progress_bar": False,
+        "enable_model_summary": False,
+        "logger": False,
+    }
+
+    # Initial training
+    model = TestFSDPCheckpointModel()
+    trainer = Trainer(**trainer_kwargs, strategy=strategy)
+    trainer.fit(model)
+    params_before = deepcopy(list(trainer.model.parameters()))
+
+    checkpoint_path = Path(trainer.strategy.broadcast(trainer.checkpoint_callback.best_model_path))
+    assert set(os.listdir(checkpoint_path)) == {"meta.pt", ".metadata", "__0_0.distcp", "__1_0.distcp"}
+
+    metadata = torch.load(checkpoint_path / "meta.pt")
+    assert "pytorch-lightning_version" in metadata
+    assert len(metadata["callbacks"]) == 1  # model checkpoint callback
+    assert "state_dict" not in metadata
+    assert "optimizer_states" not in metadata
+
+    # Load checkpoint and continue training
+    trainer_kwargs.update(max_epochs=2)
+    model = TestFSDPCheckpointModel(params_to_compare=params_before)
+    strategy = FSDPStrategy(auto_wrap_policy={nn.Linear}, state_dict_type="sharded")
+    trainer = Trainer(**trainer_kwargs, strategy=strategy)
+    trainer.fit(model, ckpt_path=checkpoint_path)
+
+
+# @RunIf(min_torch="2.3")
+# @mock.patch("lightning.pytorch.strategies.fsdp.torch.load")
+# @mock.patch("lightning.pytorch.strategies.fsdp._lazy_load")
+# @mock.patch("lightning.pytorch.strategies.fsdp._load_raw_module_state")
+# def test_lazy_load_full_state_dict(_, lazy_load_mock, torch_load_mock, tmp_path):
+#     """Test that loading a single file (full state) is lazy to reduce peak CPU memory usage."""
+#     model = BoringModel()
+#     checkpoint = {"state_dict": model.state_dict()}
+#     lazy_load_mock.return_value = checkpoint
+#
+#     strategy = FSDPStrategy()
+#     trainer = Trainer()
+#     model.trainer = trainer
+#     strategy._lightning_module = model
+#     strategy.model = model
+#
+#     file = tmp_path / "test.ckpt"
+#     file.touch()
+#
+#     strategy.load_checkpoint(checkpoint_path=file)
+#     lazy_load_mock.assert_called_once()
+
+
+@RunIf(min_torch="2.3", min_cuda_gpus=2, standalone=True)
+def test_save_sharded_and_consolidate_and_load(tmp_path):
+    """Test the consolidation of a FSDP-sharded checkpoint into a single file."""
+
+    model = BoringModel()
+    trainer = Trainer(
+        default_root_dir=tmp_path,
+        accelerator="cuda",
+        devices=2,
+        strategy=FSDPStrategy(auto_wrap_policy=always_wrap_policy, state_dict_type="sharded"),
+        max_steps=3,
+    )
+    trainer.fit(model)
+
+    checkpoint_path_sharded = trainer.strategy.broadcast(str(trainer.checkpoint_callback.best_model_path))
+    assert set(os.listdir(checkpoint_path_sharded)) == {"meta.pt", ".metadata", "__0_0.distcp", "__1_0.distcp"}
+
+    # consolidate the checkpoint to a single file
+    checkpoint_path_full = trainer.strategy.broadcast(str(tmp_path / "checkpoint_full.ckpt"))
+    if trainer.global_rank == 0:
+        checkpoint = _load_distributed_checkpoint(Path(checkpoint_path_sharded))
+        checkpoint = _format_checkpoint(checkpoint)
+        torch.save(checkpoint, checkpoint_path_full)
+    trainer.strategy.barrier()
+
+    model = BoringModel()
+    trainer = Trainer(
+        default_root_dir=tmp_path,
+        accelerator="cuda",
+        devices=2,
+        strategy="ddp",
+        max_steps=4,
+    )
+    trainer.fit(model, ckpt_path=checkpoint_path_full)
