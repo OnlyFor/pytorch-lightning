@@ -246,6 +246,9 @@ class ModelParallelStrategy(ParallelStrategy):
 
     @override
     def lightning_module_state_dict(self) -> Dict[str, Any]:
+        """Collects the state dict of the model. Only returns a non-empty state dict on rank 0
+        if ``save_distributed_checkpoint=False``.
+        """
         from torch.distributed.checkpoint.state_dict import StateDictOptions, get_model_state_dict
 
         state_dict_options = StateDictOptions(full_state_dict=(not self._save_distributed_checkpoint), cpu_offload=True)
@@ -259,6 +262,9 @@ class ModelParallelStrategy(ParallelStrategy):
 
     @override
     def optimizer_state(self, optimizer: Optimizer) -> Dict[str, Any]:
+        """Collects the state of the given optimizer. Only returns a non-empty state dict on rank 0
+        if ``save_distributed_checkpoint=False``.
+        """
         from torch.distributed.checkpoint.state_dict import StateDictOptions, get_optimizer_state_dict
         from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
         from torch.distributed.fsdp import OptimStateKeyType
@@ -268,8 +274,9 @@ class ModelParallelStrategy(ParallelStrategy):
             optimizer = optimizer._optimizer
 
         assert self.model is not None
+        
         state_dict = get_optimizer_state_dict(self.model, optimizer, options=state_dict_options)
-        if not self._save_distributed_checkpoint:
+        if not self._save_distributed_checkpoint and self.global_rank == 0:
             # Store the optimizer state dict in standard format
             state_dict = FSDP.rekey_optim_state_dict(state_dict, OptimStateKeyType.PARAM_ID, self.model)
         return state_dict
@@ -298,7 +305,7 @@ class ModelParallelStrategy(ParallelStrategy):
                 path.unlink()
             path.mkdir(parents=True, exist_ok=True)
 
-            converted_state = {"model": checkpoint.pop("state_dict")}
+            converted_state = {"state_dict": checkpoint.pop("state_dict")}
             converted_state.update({
                 f"optimizer_{idx}": optim_state
                 for idx, optim_state in enumerate(checkpoint.pop("optimizer_states", []))
@@ -316,9 +323,9 @@ class ModelParallelStrategy(ParallelStrategy):
     def load_checkpoint(self, checkpoint_path: _PATH) -> Dict[str, Any]:
         # broadcast the path from rank 0 to ensure all the states are loaded from a common path
         path = Path(self.broadcast(checkpoint_path))
-        state = {"model": self.model}
+        state = {"state_dict": self.model}
         state.update({f"optimizer_{idx}": optimizer for idx, optimizer in enumerate(self.optimizers)})
-        return _load_checkpoint(path, state, strict=self.lightning_module.strict_loading)
+        return _load_checkpoint(path=path, state=state, strict=self.lightning_module.strict_loading)
 
     def _setup_distributed(self) -> None:
         super().setup_environment()

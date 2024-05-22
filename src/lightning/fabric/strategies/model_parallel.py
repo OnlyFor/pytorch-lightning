@@ -473,8 +473,13 @@ def _load_checkpoint(
             full_state_dict=True,
             strict=strict,
         )
-        for optimizer_name, optimizer in optimizers.items():
-            optimizer_state = _rekey_optimizer_state_if_needed(checkpoint.pop(optimizer_name), module)
+        for optimizer_idx, (optimizer_name, optimizer) in enumerate(optimizers.items()):
+            if isinstance(checkpoint.get("optimizer_states", None), list):
+                optimizer_state_to_load = checkpoint["optimizer_states"][optimizer_idx]
+            else:
+                optimizer_state_to_load = checkpoint.pop(optimizer_name)
+                
+            optimizer_state = _rekey_optimizer_state_if_needed(optimizer_state_to_load, module)
             set_optimizer_state_dict(
                 module,
                 optimizer,
