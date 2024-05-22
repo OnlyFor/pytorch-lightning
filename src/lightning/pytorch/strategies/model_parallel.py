@@ -331,8 +331,11 @@ class ModelParallelStrategy(ParallelStrategy):
     def load_checkpoint(self, checkpoint_path: _PATH) -> Dict[str, Any]:
         # broadcast the path from rank 0 to ensure all the states are loaded from a common path
         path = Path(self.broadcast(checkpoint_path))
-        state = {"state_dict": self.model}
-        state.update({f"optimizer_{idx}": optimizer for idx, optimizer in enumerate(self.optimizers)})
+        state = {
+            "state_dict": self.model,
+            **{f"optimizer_{idx}": optimizer for idx, optimizer in enumerate(self.optimizers)},
+        }
+        assert self.lightning_module is not None
         return _load_checkpoint(path=path, state=state, strict=self.lightning_module.strict_loading)
 
     def _setup_distributed(self) -> None:
