@@ -488,7 +488,7 @@ def test_save_load_sharded_state_dict(tmp_path):
     model = TestCheckpointModel()
     trainer = Trainer(**trainer_kwargs, strategy=strategy)
     trainer.fit(model)
-    params_before = list(p.full_tensor() for p in trainer.model.parameters())
+    params_before = [p.full_tensor() for p in trainer.model.parameters()]
 
     checkpoint_path = Path(trainer.strategy.broadcast(trainer.checkpoint_callback.best_model_path))
     assert set(os.listdir(checkpoint_path)) == {"meta.pt", ".metadata", "__0_0.distcp", "__1_0.distcp"}
