@@ -478,7 +478,7 @@ def _load_checkpoint(
                 optimizer_state_to_load = checkpoint["optimizer_states"][optimizer_idx]
             else:
                 optimizer_state_to_load = checkpoint.pop(optimizer_name)
-                
+
             optimizer_state = _rekey_optimizer_state_if_needed(optimizer_state_to_load, module)
             set_optimizer_state_dict(
                 module,

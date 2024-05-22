@@ -24,9 +24,13 @@ from torch.optim import Optimizer
 from typing_extensions import override
 
 import lightning.pytorch as pl
-from lightning.fabric.plugins import CheckpointIO
 from lightning.fabric.plugins.collectives.torch_collective import default_pg_timeout
-from lightning.fabric.strategies.model_parallel import _setup_device_mesh, _load_checkpoint, _is_sharded_checkpoint, _distributed_checkpoint_save
+from lightning.fabric.strategies.model_parallel import (
+    _distributed_checkpoint_save,
+    _is_sharded_checkpoint,
+    _load_checkpoint,
+    _setup_device_mesh,
+)
 from lightning.fabric.utilities.distributed import (
     _distributed_is_initialized,
     _get_default_process_group_backend_for_device,
@@ -246,8 +250,11 @@ class ModelParallelStrategy(ParallelStrategy):
 
     @override
     def lightning_module_state_dict(self) -> Dict[str, Any]:
-        """Collects the state dict of the model. Only returns a non-empty state dict on rank 0
+        """Collects the state dict of the model.
+
+        Only returns a non-empty state dict on rank 0
         if ``save_distributed_checkpoint=False``.
+
         """
         from torch.distributed.checkpoint.state_dict import StateDictOptions, get_model_state_dict
 
@@ -262,8 +269,11 @@ class ModelParallelStrategy(ParallelStrategy):
 
     @override
     def optimizer_state(self, optimizer: Optimizer) -> Dict[str, Any]:
-        """Collects the state of the given optimizer. Only returns a non-empty state dict on rank 0
+        """Collects the state of the given optimizer.
+
+        Only returns a non-empty state dict on rank 0
         if ``save_distributed_checkpoint=False``.
+
         """
         from torch.distributed.checkpoint.state_dict import StateDictOptions, get_optimizer_state_dict
         from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
@@ -274,7 +284,7 @@ class ModelParallelStrategy(ParallelStrategy):
             optimizer = optimizer._optimizer
 
         assert self.model is not None
-        
+
         state_dict = get_optimizer_state_dict(self.model, optimizer, options=state_dict_options)
         if not self._save_distributed_checkpoint and self.global_rank == 0:
             # Store the optimizer state dict in standard format
