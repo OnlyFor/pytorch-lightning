@@ -26,7 +26,6 @@ defaults:
     shell: bash
 
 jobs:
-
   import-pkg:
     needs: build-packages
     runs-on: ${{ matrix.os }}
@@ -53,4 +52,3 @@ jobs:
         run: |
           from lightning.${{ matrix.pkg-name }} import *
         shell: python
-
