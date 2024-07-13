@@ -80,14 +80,15 @@ class _RequirementWithComment(Requirement):
         out = str(self)
         if self.strict:
             return f"{out}  {self.strict_string}"
+        specs = [(spec.operator, spec.version) for spec in self.specifier]
         if unfreeze == "major":
-            for operator, version in self.specs:
+            for operator, version in specs:
                 if operator in ("<", "<="):
                     major = LooseVersion(version).version[0]
                     # replace upper bound with major version increased by one
                     return out.replace(f"{operator}{version}", f"<{major + 1}.0")
         elif unfreeze == "all":
-            for operator, version in self.specs:
+            for operator, version in specs:
                 if operator in ("<", "<="):
                     # drop upper bound
                     return out.replace(f"{operator}{version},", "")
@@ -110,7 +111,7 @@ def _parse_requirements(lines: Union[str, Iterable[str]]) -> Iterator[_Requireme
     pip_argument = None
     for line in lines:
         line = line.strip()
-        if not line:
+        if not line or line.startswith("#"):
             continue
         # Drop comments -- a hash without a space may be in a URL.
         if " #" in line:
@@ -143,7 +144,7 @@ def load_requirements(path_dir: str, file_name: str = "base.txt", unfreeze: str 
         logging.warning(f"Folder {path_dir} does not have any base requirements.")
         return []
     assert path.exists(), (path_dir, file_name, path)
-    text = path.read_text()
+    text = path.read_text().splitlines()
     return [req.adjust(unfreeze) for req in _parse_requirements(text)]
 
 

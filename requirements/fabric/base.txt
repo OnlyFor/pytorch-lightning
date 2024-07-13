@@ -7,4 +7,4 @@ fsspec[http] >=2022.5.0, <2024.4.0
 packaging >=20.0, <=23.1
 typing-extensions >=4.4.0, <4.10.0
 #git+https://github.com/lightning-ai/utilities.git@main#egg=lightning-utilities  # >=0.10.0, <0.12.0
-https://github.com/lightning-ai/utilities/archive/refs/heads/main.zip#egg=lightning-utilities
+# https://github.com/lightning-ai/utilities/archive/refs/heads/main.zip#egg=lightning-utilities
