@@ -97,7 +97,7 @@ class _RequirementWithComment(Requirement):
         return out
 
 
-def _parse_requirements(lines: Union[str, Iterable[str]]) -> Iterator[_RequirementWithComment]:
+def _parse_requirements(lines: Iterable[str]) -> Iterator[_RequirementWithComment]:
     """Adapted from `pkg_resources.parse_requirements` to include comments.
 
     >>> txt = ['# ignored', '', 'this # is an', '--piparg', 'example', 'foo # strict', 'thing', '-r different/file.txt']
@@ -364,7 +364,7 @@ class AssistantCLI:
             if not ln_ or ln_.startswith("#"):
                 final.append(line)
                 continue
-            req = list(_parse_requirements(ln_))[0]
+            req = list(_parse_requirements([ln_]))[0]
             if req.name not in packages:
                 final.append(line)
         print(final)
