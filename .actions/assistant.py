@@ -23,8 +23,7 @@ from itertools import chain
 from os.path import dirname, isfile
 from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple, Union
-
-from pkg_resources import Requirement, parse_requirements, yield_lines
+from packaging.requirements import Requirement
 
 REQUIREMENT_FILES = {
     "pytorch": (
@@ -96,7 +95,7 @@ class _RequirementWithComment(Requirement):
         return out
 
 
-def _parse_requirements(strs: Union[str, Iterable[str]]) -> Iterator[_RequirementWithComment]:
+def _parse_requirements(lines: Union[str, Iterable[str]]) -> Iterator[_RequirementWithComment]:
     """Adapted from `pkg_resources.parse_requirements` to include comments.
 
     >>> txt = ['# ignored', '', 'this # is an', '--piparg', 'example', 'foo # strict', 'thing', '-r different/file.txt']
@@ -107,22 +106,17 @@ def _parse_requirements(strs: Union[str, Iterable[str]]) -> Iterator[_Requiremen
     ['this', 'example', 'foo  # strict', 'thing']
 
     """
-    lines = yield_lines(strs)
     pip_argument = None
     for line in lines:
+        line = line.strip()
+        if not line:
+            continue
         # Drop comments -- a hash without a space may be in a URL.
         if " #" in line:
             comment_pos = line.find(" #")
             line, comment = line[:comment_pos], line[comment_pos:]
         else:
             comment = ""
-        # If there is a line continuation, drop it, and append the next line.
-        if line.endswith("\\"):
-            line = line[:-2].strip()
-            try:
-                line += next(lines)
-            except StopIteration:
-                return
         # If there's a pip argument, save it
         if line.startswith("--"):
             pip_argument = line
@@ -368,7 +362,7 @@ class AssistantCLI:
             if not ln_ or ln_.startswith("#"):
                 final.append(line)
                 continue
-            req = list(parse_requirements(ln_))[0]
+            req = list(_parse_requirements(ln_))[0]
             if req.name not in packages:
                 final.append(line)
         print(final)
