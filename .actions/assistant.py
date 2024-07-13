@@ -23,6 +23,7 @@ from itertools import chain
 from os.path import dirname, isfile
 from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple, Union
+
 from packaging.requirements import Requirement
 
 REQUIREMENT_FILES = {
