@@ -94,7 +94,9 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: basic setup
-        run: pip install -q -r .actions/requirements.txt
+        run: |
+          pip install -q -r .actions/requirements.txt
+          pip install git+https://github.com/lightning-ai/utilities.git@main#egg=lightning-utilities
 
       - name: Set min. dependencies
         if: ${{ matrix.requires == 'oldest' }}
