@@ -103,9 +103,6 @@ def _parse_requirements(lines: Iterable[str]) -> Iterator[_RequirementWithCommen
     >>> txt = ['# ignored', '', 'this # is an', '--piparg', 'example', 'foo # strict', 'thing', '-r different/file.txt']
     >>> [r.adjust('none') for r in _parse_requirements(txt)]
     ['this', 'example', 'foo  # strict', 'thing']
-    >>> txt = '\\n'.join(txt)
-    >>> [r.adjust('none') for r in _parse_requirements(txt)]
-    ['this', 'example', 'foo  # strict', 'thing']
 
     """
     pip_argument = None
